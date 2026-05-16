@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
+import { resolve } from "path";
 import { SourceMapConsumer } from "source-map";
 import { CpuProfile, ResolvedFunction, SourceCorrelationResult } from "./types.js";
 import { extractHottestFunctions } from "./decoder.js";
@@ -19,11 +19,8 @@ async function resolveSourceLocation(
   const filePath = urlToPath(url);
   if (!filePath) return null;
 
-  // look for <file>.map alongside the js file, or in sourcemapDir
-  const candidates = [
-    `${filePath}.map`,
-    resolve(sourcemapDir ?? dirname(filePath), `${filePath.split("/").pop()}.map`),
-  ];
+  const candidates = [`${filePath}.map`];
+  if (sourcemapDir) candidates.push(resolve(sourcemapDir, `${filePath.split("/").pop()}.map`));
 
   const mapPath = candidates.find((p) => existsSync(p));
   if (!mapPath) return null;

@@ -26,9 +26,9 @@ function buildNodeMap(profile: CpuProfile): Map<number, CpuProfileNode> {
 }
 
 function avgDeltaMs(profile: CpuProfile): number {
-  if (profile.timeDeltas.length === 0) return 0;
-  const total = profile.timeDeltas.reduce((a, b) => a + b, 0);
-  return total / profile.timeDeltas.length / 1000;
+  const deltas = profile.timeDeltas.slice(1); // timeDeltas[0] is always 0 per V8 spec
+  if (deltas.length === 0) return 0;
+  return deltas.reduce((a, b) => a + b, 0) / deltas.length / 1000;
 }
 
 function computeInclusiveTime(
@@ -64,7 +64,6 @@ export function extractHottestFunctions(
   }
 
   const inclusiveCache = new Map<number, number>();
-  // find root node (id=1 or first node with no parent)
   const childIds = new Set(profile.nodes.flatMap((n) => n.children ?? []));
   const rootIds = profile.nodes.filter((n) => !childIds.has(n.id)).map((n) => n.id);
   for (const rootId of rootIds) {
@@ -115,7 +114,6 @@ export function analyzeCallTreePath(
   const avgMs = avgDeltaMs(profile);
   const totalMs = (profile.endTime - profile.startTime) / 1000;
 
-  // find all nodes matching function name (partial, case-insensitive)
   const needle = functionName.toLowerCase();
   const targetIds = new Set(
     profile.nodes
@@ -133,7 +131,6 @@ export function analyzeCallTreePath(
     };
   }
 
-  // build reverse map: childId → parent node
   const parentMap = new Map<number, CpuProfileNode>();
   for (const node of profile.nodes) {
     for (const childId of node.children ?? []) {
@@ -141,18 +138,17 @@ export function analyzeCallTreePath(
     }
   }
 
-  // aggregate callers
-  const callerAgg = new Map<number, { node: CpuProfileNode; callCount: number }>();
+  const callerAgg = new Map<number, { node: CpuProfileNode; sampleCount: number }>();
   for (const targetId of targetIds) {
     const parent = parentMap.get(targetId);
     if (!parent) continue;
     const existing = callerAgg.get(parent.id);
     if (existing) {
-      existing.callCount += nodeMap.get(targetId)?.hitCount ?? 0;
+      existing.sampleCount += nodeMap.get(targetId)?.hitCount ?? 0;
     } else {
       callerAgg.set(parent.id, {
         node: parent,
-        callCount: nodeMap.get(targetId)?.hitCount ?? 0,
+        sampleCount: nodeMap.get(targetId)?.hitCount ?? 0,
       });
     }
   }
@@ -163,14 +159,14 @@ export function analyzeCallTreePath(
   );
 
   const callers: CallerEntry[] = [...callerAgg.values()]
-    .sort((a, b) => b.callCount - a.callCount)
+    .sort((a, b) => b.sampleCount - a.sampleCount)
     .slice(0, topCallers)
     .map((entry) => ({
       functionName: entry.node.callFrame.functionName || "(anonymous)",
       url: entry.node.callFrame.url,
       lineNumber: entry.node.callFrame.lineNumber,
-      callCount: entry.callCount,
-      selfTimeMs: Math.round(entry.callCount * avgMs * 100) / 100,
+      sampleCount: entry.sampleCount,
+      attributedTimeMs: Math.round(entry.sampleCount * avgMs * 100) / 100,
     }));
 
   return {

@@ -1,4 +1,3 @@
-// V8 .cpuprofile input format
 export interface CpuProfileCallFrame {
   functionName: string;
   scriptId: string;
@@ -22,7 +21,6 @@ export interface CpuProfile {
   timeDeltas: number[];
 }
 
-// Tool result types
 export interface HotFunction {
   rank: number;
   functionName: string;
@@ -40,8 +38,8 @@ export interface CallerEntry {
   functionName: string;
   url: string;
   lineNumber: number;
-  callCount: number;
-  selfTimeMs: number;
+  sampleCount: number;
+  attributedTimeMs: number;
 }
 
 export interface CallTreePath {

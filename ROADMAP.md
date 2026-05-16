@@ -102,9 +102,9 @@ interface HotFunction {
   functionName: string;
   url: string;
   lineNumber: number;
-  selfTimeMs: number;       // exclusive time
-  totalTimeMs: number;      // inclusive time
-  selfPercent: number;      // % of total profile duration
+  selfTimeMs: number; // exclusive time
+  totalTimeMs: number; // inclusive time
+  selfPercent: number; // % of total profile duration
   totalPercent: number;
   hitCount: number;
 }
@@ -116,13 +116,13 @@ interface CallTreePath {
     functionName: string;
     url: string;
     lineNumber: number;
-    callCount: number;       // how many samples came through this path
+    callCount: number; // how many samples came through this path
     selfTimeMs: number;
   }>;
 }
 
 interface SourceLocation {
-  originalFile: string;      // TypeScript source path
+  originalFile: string; // TypeScript source path
   originalLine: number;
   originalColumn: number;
   originalFunction: string;
@@ -186,6 +186,7 @@ return top N (default: 10)
 ### Step 5: Find callers for analyze_call_tree_path
 
 The profile tree is top-down (parent → children). To find callers of a function:
+
 ```
 build reverse map: childId → parentId[]  (during initial parse)
 for target function name:
@@ -215,6 +216,7 @@ location. The tool remains useful without TypeScript source maps.
 ### `extract_hottest_functions`
 
 Input:
+
 ```typescript
 {
   profile_path: string         // absolute path to .cpuprofile file
@@ -231,6 +233,7 @@ Output: `HotFunction[]` ranked by selfTimeMs.
 ### `analyze_call_tree_path`
 
 Input:
+
 ```typescript
 {
   profile_path: string
@@ -246,6 +249,7 @@ Output: `CallTreePath` — who calls the target and how often.
 ### `correlate_source_code`
 
 Input:
+
 ```typescript
 {
   profile_path: string

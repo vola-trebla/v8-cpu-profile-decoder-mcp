@@ -1,0 +1,58 @@
+{
+  "name": "v8-cpu-profile-decoder-mcp",
+  "version": "0.1.0",
+  "description": "MCP server that decodes V8 CPU profiles into token-efficient bottleneck summaries for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "v8-cpu-profile-decoder-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc && chmod +x dist/index.js",
+    "prepack": "chmod +x dist/index.js",
+    "lint": "eslint src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "keywords": [
+    "v8",
+    "cpu-profile",
+    "performance",
+    "profiling",
+    "mcp",
+    "nodejs",
+    "devtools"
+  ],
+  "author": "vola-trebla",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "source-map": "^0.7.6",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "@typescript-eslint/eslint-plugin": "^8.59.3",
+    "@typescript-eslint/parser": "^8.59.3",
+    "eslint": "^9.39.4",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.2",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "prettier --write",
+      "eslint --fix"
+    ],
+    "package.json": [
+      "prettier --write"
+    ]
+  }
+}

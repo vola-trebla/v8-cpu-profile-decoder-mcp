@@ -1,4 +1,5 @@
-import { readFileSync, existsSync } from "fs";
+import { existsSync } from "fs";
+import { readFile } from "fs/promises";
 import { resolve } from "path";
 import { SourceMapConsumer } from "source-map";
 import { CpuProfile, ResolvedFunction, SourceCorrelationResult } from "./types.js";
@@ -25,20 +26,13 @@ async function resolveSourceLocation(
   const mapPath = candidates.find((p) => existsSync(p));
   if (!mapPath) return null;
 
-  const rawMap = JSON.parse(readFileSync(mapPath, "utf-8"));
-  const consumer = await new SourceMapConsumer(rawMap);
-
+  const rawMap = JSON.parse(await readFile(mapPath, "utf-8"));
   // V8 lineNumber is 0-based, source-map expects 1-based
-  const pos = consumer.originalPositionFor({ line: line + 1, column });
-  consumer.destroy();
-
-  if (!pos.source) return null;
-  return {
-    file: pos.source,
-    line: pos.line ?? 0,
-    column: pos.column ?? 0,
-    name: pos.name,
-  };
+  return SourceMapConsumer.with(rawMap, null, (consumer) => {
+    const pos = consumer.originalPositionFor({ line: line + 1, column });
+    if (!pos.source) return null;
+    return { file: pos.source, line: pos.line ?? 0, column: pos.column ?? 0, name: pos.name };
+  });
 }
 
 export async function correlateSourceCode(

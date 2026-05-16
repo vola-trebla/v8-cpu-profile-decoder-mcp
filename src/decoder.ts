@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readFile } from "fs/promises";
 import { CpuProfile, CpuProfileNode, HotFunction, CallTreePath, CallerEntry } from "./types.js";
 
 const V8_INTERNALS = new Set(["(program)", "(garbage collector)", "(idle)", "(root)"]);
@@ -10,8 +10,8 @@ function isUserCode(node: CpuProfileNode): boolean {
   return true;
 }
 
-export function loadProfile(profilePath: string): CpuProfile {
-  const raw = readFileSync(profilePath, "utf-8");
+export async function loadProfile(profilePath: string): Promise<CpuProfile> {
+  const raw = await readFile(profilePath, "utf-8");
   const profile = JSON.parse(raw) as CpuProfile;
   if (!Array.isArray(profile.nodes) || !Array.isArray(profile.samples)) {
     throw new Error("Invalid .cpuprofile: missing nodes or samples arrays");

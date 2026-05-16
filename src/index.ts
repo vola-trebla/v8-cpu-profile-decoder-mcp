@@ -52,7 +52,7 @@ server.registerTool(
   },
   async ({ profile_path, top_n, min_self_percent, include_node_internals }) => {
     try {
-      const profile = loadProfile(profile_path);
+      const profile = await loadProfile(profile_path);
       const result = extractHottestFunctions(
         profile,
         top_n,
@@ -89,7 +89,7 @@ server.registerTool(
   },
   async ({ profile_path, function_name, top_callers }) => {
     try {
-      const profile = loadProfile(profile_path);
+      const profile = await loadProfile(profile_path);
       const result = analyzeCallTreePath(profile, function_name, top_callers);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
@@ -124,7 +124,7 @@ server.registerTool(
   },
   async ({ profile_path, top_n, sourcemap_dir }) => {
     try {
-      const profile = loadProfile(profile_path);
+      const profile = await loadProfile(profile_path);
       const result = await correlateSourceCode(profile, top_n, sourcemap_dir ?? null);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (err) {

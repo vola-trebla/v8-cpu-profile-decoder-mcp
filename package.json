@@ -47,12 +47,11 @@
     "typescript": "^6.0.3"
   },
   "lint-staged": {
-    "src/**/*.ts": [
-      "prettier --write",
-      "eslint --fix"
-    ],
-    "package.json": [
+    "**/*.{ts,mjs,json,md}": [
       "prettier --write"
+    ],
+    "src/**/*.ts": [
+      "eslint --fix"
     ]
   }
 }

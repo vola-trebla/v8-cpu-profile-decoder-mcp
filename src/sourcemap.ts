@@ -1,13 +1,13 @@
-import { existsSync } from "fs";
-import { readFile } from "fs/promises";
-import { resolve } from "path";
-import { SourceMapConsumer } from "source-map";
-import { CpuProfile, ResolvedFunction, SourceCorrelationResult } from "./types.js";
-import { extractHottestFunctions } from "./decoder.js";
+import { existsSync } from 'fs';
+import { readFile } from 'fs/promises';
+import { resolve } from 'path';
+import { SourceMapConsumer } from 'source-map';
+import { CpuProfile, ResolvedFunction, SourceCorrelationResult } from './types.js';
+import { extractHottestFunctions } from './decoder.js';
 
 function urlToPath(url: string): string | null {
-  if (url.startsWith("file://")) return url.slice(7);
-  if (url.startsWith("/")) return url;
+  if (url.startsWith('file://')) return url.slice(7);
+  if (url.startsWith('/')) return url;
   return null;
 }
 
@@ -21,12 +21,12 @@ async function resolveSourceLocation(
   if (!filePath) return null;
 
   const candidates = [`${filePath}.map`];
-  if (sourcemapDir) candidates.push(resolve(sourcemapDir, `${filePath.split("/").pop()}.map`));
+  if (sourcemapDir) candidates.push(resolve(sourcemapDir, `${filePath.split('/').pop()}.map`));
 
   const mapPath = candidates.find((p) => existsSync(p));
   if (!mapPath) return null;
 
-  const rawMap = JSON.parse(await readFile(mapPath, "utf-8"));
+  const rawMap = JSON.parse(await readFile(mapPath, 'utf-8'));
   // V8 lineNumber is 0-based, source-map expects 1-based
   return SourceMapConsumer.with(rawMap, null, (consumer) => {
     const pos = consumer.originalPositionFor({ line: line + 1, column });

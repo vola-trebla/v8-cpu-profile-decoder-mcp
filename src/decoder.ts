@@ -1,20 +1,20 @@
-import { readFile } from "fs/promises";
-import { CpuProfile, CpuProfileNode, HotFunction, CallTreePath, CallerEntry } from "./types.js";
+import { readFile } from 'fs/promises';
+import { CpuProfile, CpuProfileNode, HotFunction, CallTreePath, CallerEntry } from './types.js';
 
-const V8_INTERNALS = new Set(["(program)", "(garbage collector)", "(idle)", "(root)"]);
+const V8_INTERNALS = new Set(['(program)', '(garbage collector)', '(idle)', '(root)']);
 
 function isUserCode(node: CpuProfileNode): boolean {
   if (V8_INTERNALS.has(node.callFrame.functionName)) return false;
   const url = node.callFrame.url;
-  if (!url || url.startsWith("node:") || url.startsWith("v8:")) return false;
+  if (!url || url.startsWith('node:') || url.startsWith('v8:')) return false;
   return true;
 }
 
 export async function loadProfile(profilePath: string): Promise<CpuProfile> {
-  const raw = await readFile(profilePath, "utf-8");
+  const raw = await readFile(profilePath, 'utf-8');
   const profile = JSON.parse(raw) as CpuProfile;
   if (!Array.isArray(profile.nodes) || !Array.isArray(profile.samples)) {
-    throw new Error("Invalid .cpuprofile: missing nodes or samples arrays");
+    throw new Error('Invalid .cpuprofile: missing nodes or samples arrays');
   }
   return profile;
 }
@@ -85,7 +85,7 @@ export function extractHottestFunctions(
 
     results.push({
       rank: rank++,
-      functionName: node.callFrame.functionName || "(anonymous)",
+      functionName: node.callFrame.functionName || '(anonymous)',
       url: node.callFrame.url,
       lineNumber: node.callFrame.lineNumber,
       columnNumber: node.callFrame.columnNumber,
@@ -162,7 +162,7 @@ export function analyzeCallTreePath(
     .sort((a, b) => b.sampleCount - a.sampleCount)
     .slice(0, topCallers)
     .map((entry) => ({
-      functionName: entry.node.callFrame.functionName || "(anonymous)",
+      functionName: entry.node.callFrame.functionName || '(anonymous)',
       url: entry.node.callFrame.url,
       lineNumber: entry.node.callFrame.lineNumber,
       sampleCount: entry.sampleCount,

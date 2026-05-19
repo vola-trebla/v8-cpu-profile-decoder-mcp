@@ -14,7 +14,7 @@ import { correlateSourceCode } from './sourcemap.js';
 
 const server = new McpServer({
   name: 'v8-cpu-profile-decoder-mcp',
-  version: '0.2.0',
+  version: '0.3.0',
 });
 
 function errorResponse(err: unknown) {

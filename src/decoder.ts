@@ -7,6 +7,8 @@ import {
   CallerEntry,
   GcTypeBreakdown,
   GcPressureResult,
+  DiffEntry,
+  DiffResult,
 } from './types.js';
 
 const V8_INTERNALS = new Set(['(program)', '(garbage collector)', '(idle)', '(root)']);
@@ -405,5 +407,118 @@ export function analyzeGcPressure(profile: CpuProfile, thresholdPercent: number)
     exceeds_threshold: exceedsThreshold,
     threshold_percent: thresholdPercent,
     verdict,
+  };
+}
+
+// Build a map from call-frame key → normalised self-time in ms.
+// Key uses (functionName|url|lineNumber|columnNumber) — not node ID which is transient.
+function buildNormalisedSelfTimeMap(profile: CpuProfile): Map<string, number> {
+  const avgMs = avgDeltaMs(profile);
+  const map = new Map<string, number>();
+  for (const node of profile.nodes) {
+    if (node.hitCount === 0) continue;
+    if (!isUserCode(node)) continue;
+    const cf = node.callFrame;
+    const key = `${cf.functionName}|${cf.url}|${cf.lineNumber}|${cf.columnNumber}`;
+    map.set(key, (map.get(key) ?? 0) + node.hitCount * avgMs);
+  }
+  return map;
+}
+
+function frameKey(node: CpuProfileNode): string {
+  const cf = node.callFrame;
+  return `${cf.functionName}|${cf.url}|${cf.lineNumber}|${cf.columnNumber}`;
+}
+
+export function diffProfiles(before: CpuProfile, after: CpuProfile, topN: number): DiffResult {
+  const beforeDurationMs = (before.endTime - before.startTime) / 1000;
+  const afterDurationMs = (after.endTime - after.startTime) / 1000;
+
+  const beforeMap = buildNormalisedSelfTimeMap(before);
+  const afterMap = buildNormalisedSelfTimeMap(after);
+
+  const allKeys = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+
+  const improvements: DiffEntry[] = [];
+  const regressions: DiffEntry[] = [];
+  const onlyInBefore: DiffEntry[] = [];
+  const onlyInAfter: DiffEntry[] = [];
+
+  // Reconstruct display info from key (functionName|url|line|col)
+  const keyMeta = new Map<string, { functionName: string; url: string; lineNumber: number }>();
+  for (const node of [...before.nodes, ...after.nodes]) {
+    const k = frameKey(node);
+    if (!keyMeta.has(k)) {
+      keyMeta.set(k, {
+        functionName: node.callFrame.functionName || '(anonymous)',
+        url: node.callFrame.url,
+        lineNumber: node.callFrame.lineNumber,
+      });
+    }
+  }
+
+  for (const key of allKeys) {
+    const bMs = beforeMap.get(key) ?? 0;
+    const aMs = afterMap.get(key) ?? 0;
+    const meta = keyMeta.get(key)!;
+
+    if (bMs > 0 && aMs === 0) {
+      onlyInBefore.push({
+        function_name: meta.functionName,
+        url: meta.url,
+        line_number: meta.lineNumber,
+        before_ms: Math.round(bMs * 100) / 100,
+        after_ms: 0,
+        absolute_diff_ms: Math.round(-bMs * 100) / 100,
+        relative_diff_percent: -100,
+      });
+      continue;
+    }
+    if (aMs > 0 && bMs === 0) {
+      onlyInAfter.push({
+        function_name: meta.functionName,
+        url: meta.url,
+        line_number: meta.lineNumber,
+        before_ms: 0,
+        after_ms: Math.round(aMs * 100) / 100,
+        absolute_diff_ms: Math.round(aMs * 100) / 100,
+        relative_diff_percent: Infinity,
+      });
+      continue;
+    }
+
+    const diffMs = aMs - bMs;
+    const diffPct = Math.round((diffMs / bMs) * 10000) / 100;
+    const entry: DiffEntry = {
+      function_name: meta.functionName,
+      url: meta.url,
+      line_number: meta.lineNumber,
+      before_ms: Math.round(bMs * 100) / 100,
+      after_ms: Math.round(aMs * 100) / 100,
+      absolute_diff_ms: Math.round(diffMs * 100) / 100,
+      relative_diff_percent: diffPct,
+    };
+
+    if (diffMs < 0) improvements.push(entry);
+    else if (diffMs > 0) regressions.push(entry);
+  }
+
+  improvements.sort((a, b) => a.absolute_diff_ms - b.absolute_diff_ms);
+  regressions.sort((a, b) => b.absolute_diff_ms - a.absolute_diff_ms);
+  onlyInBefore.sort((a, b) => b.before_ms - a.before_ms);
+  onlyInAfter.sort((a, b) => b.after_ms - a.after_ms);
+
+  const totalDeltaMs = afterDurationMs - beforeDurationMs;
+
+  return {
+    before_duration_ms: Math.round(beforeDurationMs * 100) / 100,
+    after_duration_ms: Math.round(afterDurationMs * 100) / 100,
+    total_execution_delta_ms: Math.round(totalDeltaMs * 100) / 100,
+    total_execution_delta_percent:
+      beforeDurationMs > 0 ? Math.round((totalDeltaMs / beforeDurationMs) * 10000) / 100 : 0,
+    top_improvements: improvements.slice(0, topN),
+    top_regressions: regressions.slice(0, topN),
+    only_in_before: onlyInBefore.slice(0, topN),
+    only_in_after: onlyInAfter.slice(0, topN),
   };
 }

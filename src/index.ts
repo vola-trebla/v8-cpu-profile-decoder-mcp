@@ -7,6 +7,7 @@ import {
   extractHottestFunctions,
   analyzeCallTreePath,
   analyzeGcPressure,
+  diffProfiles,
 } from './decoder.js';
 import { correlateSourceCode } from './sourcemap.js';
 
@@ -190,6 +191,45 @@ server.registerTool(
     try {
       const profile = await loadProfile(profile_path);
       const result = analyzeGcPressure(profile, threshold_percent);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'diff_profiles',
+  {
+    description:
+      'Compares two V8 .cpuprofile files (before and after an optimization) and returns per-function ' +
+      "CPU time deltas, normalized against each profile's total duration. " +
+      'Frames are matched by call-frame coordinates (functionName + url + line + column), ' +
+      'not by transient node IDs, so alignment is stable across profiling sessions. ' +
+      'Use to answer: which functions improved or regressed after my change, and by how much?',
+    inputSchema: {
+      before_profile_path: z.string().describe('Absolute path to the baseline .cpuprofile file'),
+      after_profile_path: z
+        .string()
+        .describe(
+          'Absolute path to the optimized .cpuprofile file to compare against the baseline'
+        ),
+      top_n: z
+        .number()
+        .int()
+        .min(1)
+        .max(20)
+        .default(5)
+        .describe('Number of top improvements and regressions to return (default: 5)'),
+    },
+  },
+  async ({ before_profile_path, after_profile_path, top_n }) => {
+    try {
+      const [before, after] = await Promise.all([
+        loadProfile(before_profile_path),
+        loadProfile(after_profile_path),
+      ]);
+      const result = diffProfiles(before, after, top_n);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);

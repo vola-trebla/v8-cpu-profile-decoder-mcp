@@ -7,7 +7,7 @@ import { correlateSourceCode } from './sourcemap.js';
 
 const server = new McpServer({
   name: 'v8-cpu-profile-decoder-mcp',
-  version: '0.1.0',
+  version: '0.2.0',
 });
 
 function errorResponse(err: unknown) {
@@ -28,6 +28,8 @@ server.registerTool(
     description:
       'Parses a V8 .cpuprofile file and returns the top N functions ranked by exclusive CPU time (self time). ' +
       'Filters out V8 internals and Node.js built-ins by default, returning only user code. ' +
+      'Framework frames (express, next.js, koa, etc.) can be collapsed into a single entry. ' +
+      'Recursive calls to the same source location are merged with an instanceCount field. ' +
       'Use this first to identify which functions are consuming the most CPU in a Node.js performance profile.',
     inputSchema: {
       profile_path: z.string().describe('Absolute path to the .cpuprofile file'),
@@ -48,16 +50,40 @@ server.registerTool(
         .boolean()
         .default(false)
         .describe('Include V8 internals and Node.js built-ins in results (default: false)'),
+      collapse_frameworks: z
+        .boolean()
+        .default(true)
+        .describe(
+          'Collapse all frames from known frameworks (express, next.js, koa, fastify, nestjs, react, vue, nuxt, hapi) ' +
+            'into a single "<framework> internals>" entry per framework. ' +
+            'Prevents dozens of small framework entries from diluting the top-N list (default: true)'
+        ),
+      collapse_recursion: z
+        .boolean()
+        .default(true)
+        .describe(
+          'Merge multiple nodes with the same source location (functionName + url + line + column) into one entry. ' +
+            'instanceCount shows how many recursive instances were merged (default: true)'
+        ),
     },
   },
-  async ({ profile_path, top_n, min_self_percent, include_node_internals }) => {
+  async ({
+    profile_path,
+    top_n,
+    min_self_percent,
+    include_node_internals,
+    collapse_frameworks,
+    collapse_recursion,
+  }) => {
     try {
       const profile = await loadProfile(profile_path);
       const result = extractHottestFunctions(
         profile,
         top_n,
         min_self_percent,
-        include_node_internals
+        include_node_internals,
+        collapse_frameworks,
+        collapse_recursion
       );
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {

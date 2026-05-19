@@ -1,5 +1,13 @@
 import { readFile } from 'fs/promises';
-import { CpuProfile, CpuProfileNode, HotFunction, CallTreePath, CallerEntry } from './types.js';
+import {
+  CpuProfile,
+  CpuProfileNode,
+  HotFunction,
+  CallTreePath,
+  CallerEntry,
+  GcTypeBreakdown,
+  GcPressureResult,
+} from './types.js';
 
 const V8_INTERNALS = new Set(['(program)', '(garbage collector)', '(idle)', '(root)']);
 
@@ -300,5 +308,102 @@ export function analyzeCallTreePath(
     totalSelfTimeMs: Math.round(totalSelfMs * 100) / 100,
     totalPercent: totalMs > 0 ? Math.round((totalSelfMs / totalMs) * 10000) / 100 : 0,
     callers,
+  };
+}
+
+// GC type detection based on V8 internal frame names present in CPU profiles.
+// Each pattern matches frames that appear as children of (garbage collector) or
+// as standalone GC phase nodes when the profiler has enough resolution.
+const GC_TYPE_PATTERNS: Array<[keyof GcTypeBreakdown, RegExp]> = [
+  ['scavenger', /scaveng|newspace\.scavenger|semi.space/i],
+  ['mark_compact', /markcompact|mark\w*compact|compactor|compact\.sweep/i],
+  ['mark_sweep', /marksweep|mark\w*sweep|sweepspace|sweeping|sweep\.code/i],
+  ['incremental', /incrementalmark|incremental\w*marking|incremental\w*compaction/i],
+];
+
+function classifyGcNode(functionName: string): keyof GcTypeBreakdown {
+  for (const [type, pattern] of GC_TYPE_PATTERNS) {
+    if (pattern.test(functionName)) return type;
+  }
+  return 'generic';
+}
+
+export function analyzeGcPressure(profile: CpuProfile, thresholdPercent: number): GcPressureResult {
+  // Count from samples array so gc_ticks and total_ticks are always consistent.
+  const totalTicks = profile.samples.length;
+  const nodeMap = buildNodeMap(profile);
+  const breakdown: GcTypeBreakdown = {
+    scavenger: 0,
+    mark_sweep: 0,
+    mark_compact: 0,
+    incremental: 0,
+    generic: 0,
+  };
+
+  for (const sampleId of profile.samples) {
+    const node = nodeMap.get(sampleId);
+    if (!node) continue;
+    const fn = node.callFrame.functionName;
+    if (fn === '(garbage collector)') {
+      breakdown.generic++;
+    } else if (GC_TYPE_PATTERNS.some(([, re]) => re.test(fn))) {
+      breakdown[classifyGcNode(fn)]++;
+    }
+  }
+
+  const gcTicks =
+    breakdown.scavenger +
+    breakdown.mark_sweep +
+    breakdown.mark_compact +
+    breakdown.incremental +
+    breakdown.generic;
+
+  const gcPct = totalTicks > 0 ? Math.round((gcTicks / totalTicks) * 10000) / 100 : 0;
+  const exceedsThreshold = gcPct >= thresholdPercent;
+
+  // Build verdict: identify the dominant GC type for a targeted recommendation.
+  let verdict: string;
+  if (gcTicks === 0) {
+    verdict = 'No GC activity detected in this profile.';
+  } else {
+    const dominant = (
+      ['scavenger', 'mark_sweep', 'mark_compact', 'incremental', 'generic'] as Array<
+        keyof GcTypeBreakdown
+      >
+    ).reduce((a, b) => (breakdown[a] >= breakdown[b] ? a : b));
+
+    const recommendations: Record<keyof GcTypeBreakdown, string> = {
+      scavenger:
+        'Dominated by Scavenger (short-lived object pressure). ' +
+        'Consider object pooling, reusing buffers, or reducing closure captures.',
+      mark_sweep:
+        'Dominated by Mark-Sweep (old-space pressure). ' +
+        'Audit long-lived objects and caches for memory leaks.',
+      mark_compact:
+        'Dominated by Mark-Compact (heap compaction). ' +
+        'Large heap fragmentation — reduce peak allocation bursts.',
+      incremental:
+        'Dominated by Incremental Marking. ' +
+        'Allocation rate is high enough to keep the incremental marker busy — reduce object churn.',
+      generic:
+        'GC type breakdown unavailable (profile lacks sub-phase frames). ' +
+        'Consider reducing overall allocation rate.',
+    };
+
+    const status = exceedsThreshold
+      ? `GC consumed ${gcPct}% of CPU — exceeds the ${thresholdPercent}% threshold. `
+      : `GC consumed ${gcPct}% of CPU. `;
+
+    verdict = status + recommendations[dominant];
+  }
+
+  return {
+    gc_ticks: gcTicks,
+    total_ticks: totalTicks,
+    gc_percentage: gcPct,
+    gc_type_breakdown: breakdown,
+    exceeds_threshold: exceedsThreshold,
+    threshold_percent: thresholdPercent,
+    verdict,
   };
 }

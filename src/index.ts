@@ -2,7 +2,12 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod/v4';
-import { loadProfile, extractHottestFunctions, analyzeCallTreePath } from './decoder.js';
+import {
+  loadProfile,
+  extractHottestFunctions,
+  analyzeCallTreePath,
+  analyzeGcPressure,
+} from './decoder.js';
 import { correlateSourceCode } from './sourcemap.js';
 
 const server = new McpServer({
@@ -152,6 +157,39 @@ server.registerTool(
     try {
       const profile = await loadProfile(profile_path);
       const result = await correlateSourceCode(profile, top_n, sourcemap_dir ?? null);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'analyze_gc_pressure',
+  {
+    description:
+      'Analyses a V8 .cpuprofile for garbage collection overhead. ' +
+      'Reports total GC time as a percentage of profiling duration, broken down by GC type ' +
+      '(Scavenger = short-lived object pressure, Mark-Sweep/Mark-Compact = old-space pressure, ' +
+      'Incremental = high allocation rate). ' +
+      'Flags when GC exceeds a configurable threshold and provides a targeted recommendation. ' +
+      'Use to answer: is GC the bottleneck, and what kind of allocation pattern is causing it?',
+    inputSchema: {
+      profile_path: z.string().describe('Absolute path to the .cpuprofile file'),
+      threshold_percent: z
+        .number()
+        .min(0)
+        .max(100)
+        .default(10)
+        .describe(
+          'GC percentage above which exceeds_threshold is set to true and a warning is emitted (default: 10)'
+        ),
+    },
+  },
+  async ({ profile_path, threshold_percent }) => {
+    try {
+      const profile = await loadProfile(profile_path);
+      const result = analyzeGcPressure(profile, threshold_percent);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);

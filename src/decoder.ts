@@ -3,8 +3,37 @@ import { CpuProfile, CpuProfileNode, HotFunction, CallTreePath, CallerEntry } fr
 
 const V8_INTERNALS = new Set(['(program)', '(garbage collector)', '(idle)', '(root)']);
 
+const BUILTIN_PREFIXES = [
+  'Builtin: ',
+  'LazyCompile: ',
+  'BytecodeHandler: ',
+  'StubCall: ',
+  'RegExp: ',
+  'InterpretedFrame: ',
+];
+
+const FRAMEWORK_LABELS: [RegExp, string][] = [
+  [/node_modules\/express\//, 'express'],
+  [/node_modules\/next\//, 'next.js'],
+  [/node_modules\/koa\//, 'koa'],
+  [/node_modules\/fastify\//, 'fastify'],
+  [/node_modules\/@nestjs\//, 'nestjs'],
+  [/node_modules\/react(?:-dom)?\//, 'react'],
+  [/node_modules\/vue\//, 'vue'],
+  [/node_modules\/@nuxt\/|node_modules\/nuxt\//, 'nuxt'],
+  [/node_modules\/hapi\/|node_modules\/@hapi\//, 'hapi'],
+];
+
+function detectFramework(url: string): string | null {
+  for (const [pattern, label] of FRAMEWORK_LABELS) {
+    if (pattern.test(url)) return label;
+  }
+  return null;
+}
+
 function isUserCode(node: CpuProfileNode): boolean {
   if (V8_INTERNALS.has(node.callFrame.functionName)) return false;
+  if (BUILTIN_PREFIXES.some((p) => node.callFrame.functionName.startsWith(p))) return false;
   const url = node.callFrame.url;
   if (!url || url.startsWith('node:') || url.startsWith('v8:')) return false;
   return true;
@@ -48,55 +77,151 @@ function computeInclusiveTime(
   return total;
 }
 
+interface AggregatedEntry {
+  functionName: string;
+  url: string;
+  lineNumber: number;
+  columnNumber: number;
+  selfTimeMs: number;
+  inclusiveTimeMs: number;
+  hitCount: number;
+  instanceCount: number;
+  frameworkLabel: string | null;
+}
+
+function aggregateNodes(
+  nodes: CpuProfileNode[],
+  selfTimeMsMap: Map<number, number>,
+  inclusiveCache: Map<number, number>,
+  collapseFrameworks: boolean,
+  collapseRecursion: boolean
+): AggregatedEntry[] {
+  const groups = new Map<string, AggregatedEntry>();
+
+  for (const node of nodes) {
+    const cf = node.callFrame;
+    const selfMs = selfTimeMsMap.get(node.id) ?? 0;
+    const inclusiveMs = inclusiveCache.get(node.id) ?? selfMs;
+
+    let key: string;
+    let functionName: string;
+    let url: string;
+    let lineNumber: number;
+    let columnNumber: number;
+    let frameworkLabel: string | null = null;
+
+    const fw = collapseFrameworks ? detectFramework(cf.url) : null;
+    if (fw) {
+      key = `__fw:${fw}`;
+      functionName = `<${fw} internals>`;
+      url = cf.url;
+      lineNumber = 0;
+      columnNumber = 0;
+      frameworkLabel = fw;
+    } else if (collapseRecursion) {
+      key = `${cf.functionName}|${cf.url}|${cf.lineNumber}|${cf.columnNumber}`;
+      functionName = cf.functionName;
+      url = cf.url;
+      lineNumber = cf.lineNumber;
+      columnNumber = cf.columnNumber;
+    } else {
+      key = String(node.id);
+      functionName = cf.functionName;
+      url = cf.url;
+      lineNumber = cf.lineNumber;
+      columnNumber = cf.columnNumber;
+    }
+
+    const existing = groups.get(key);
+    if (existing) {
+      existing.selfTimeMs += selfMs;
+      // inclusive time is not additive across tree positions — keep max for single entries,
+      // use selfTimeMs for aggregated ones (set after grouping below)
+      existing.inclusiveTimeMs += inclusiveMs;
+      existing.hitCount += node.hitCount;
+      existing.instanceCount++;
+    } else {
+      groups.set(key, {
+        functionName,
+        url,
+        lineNumber,
+        columnNumber,
+        selfTimeMs: selfMs,
+        inclusiveTimeMs: inclusiveMs,
+        hitCount: node.hitCount,
+        instanceCount: 1,
+        frameworkLabel,
+      });
+    }
+  }
+
+  // For entries merged from multiple nodes, inclusive time is not well-defined —
+  // fall back to selfTimeMs to avoid misleading sums across unrelated subtrees.
+  for (const entry of groups.values()) {
+    if (entry.instanceCount > 1) {
+      entry.inclusiveTimeMs = entry.selfTimeMs;
+    }
+  }
+
+  return [...groups.values()];
+}
+
 export function extractHottestFunctions(
   profile: CpuProfile,
   topN: number,
   minSelfPercent: number,
-  includeNodeInternals: boolean
+  includeNodeInternals: boolean,
+  collapseFrameworks: boolean,
+  collapseRecursion: boolean
 ): HotFunction[] {
   const nodeMap = buildNodeMap(profile);
   const avgMs = avgDeltaMs(profile);
   const totalMs = (profile.endTime - profile.startTime) / 1000;
 
-  const selfTimeMs = new Map<number, number>();
+  const selfTimeMsMap = new Map<number, number>();
   for (const node of profile.nodes) {
-    selfTimeMs.set(node.id, node.hitCount * avgMs);
+    selfTimeMsMap.set(node.id, node.hitCount * avgMs);
   }
 
   const inclusiveCache = new Map<number, number>();
   const childIds = new Set(profile.nodes.flatMap((n) => n.children ?? []));
   const rootIds = profile.nodes.filter((n) => !childIds.has(n.id)).map((n) => n.id);
   for (const rootId of rootIds) {
-    computeInclusiveTime(rootId, nodeMap, selfTimeMs, inclusiveCache);
+    computeInclusiveTime(rootId, nodeMap, selfTimeMsMap, inclusiveCache);
   }
+
+  const eligible = profile.nodes.filter((n) => (includeNodeInternals ? true : isUserCode(n)));
+
+  const aggregated = aggregateNodes(
+    eligible,
+    selfTimeMsMap,
+    inclusiveCache,
+    collapseFrameworks,
+    collapseRecursion
+  );
+
+  const sorted = aggregated.sort((a, b) => b.selfTimeMs - a.selfTimeMs);
 
   const results: HotFunction[] = [];
   let rank = 1;
 
-  const sorted = [...profile.nodes].sort(
-    (a, b) => (selfTimeMs.get(b.id) ?? 0) - (selfTimeMs.get(a.id) ?? 0)
-  );
-
-  for (const node of sorted) {
-    if (!includeNodeInternals && !isUserCode(node)) continue;
-    const selfMs = selfTimeMs.get(node.id) ?? 0;
-    const selfPct = totalMs > 0 ? (selfMs / totalMs) * 100 : 0;
+  for (const entry of sorted) {
+    const selfPct = totalMs > 0 ? (entry.selfTimeMs / totalMs) * 100 : 0;
     if (selfPct < minSelfPercent) continue;
 
     results.push({
       rank: rank++,
-      functionName: node.callFrame.functionName || '(anonymous)',
-      url: node.callFrame.url,
-      lineNumber: node.callFrame.lineNumber,
-      columnNumber: node.callFrame.columnNumber,
-      selfTimeMs: Math.round(selfMs * 100) / 100,
-      totalTimeMs: Math.round((inclusiveCache.get(node.id) ?? selfMs) * 100) / 100,
+      functionName: entry.functionName || '(anonymous)',
+      url: entry.url,
+      lineNumber: entry.lineNumber,
+      columnNumber: entry.columnNumber,
+      selfTimeMs: Math.round(entry.selfTimeMs * 100) / 100,
+      totalTimeMs: Math.round(entry.inclusiveTimeMs * 100) / 100,
       selfPercent: Math.round(selfPct * 100) / 100,
-      totalPercent:
-        totalMs > 0
-          ? Math.round(((inclusiveCache.get(node.id) ?? selfMs) / totalMs) * 10000) / 100
-          : 0,
-      hitCount: node.hitCount,
+      totalPercent: totalMs > 0 ? Math.round((entry.inclusiveTimeMs / totalMs) * 10000) / 100 : 0,
+      hitCount: entry.hitCount,
+      instanceCount: entry.instanceCount,
+      frameworkLabel: entry.frameworkLabel,
     });
 
     if (results.length >= topN) break;

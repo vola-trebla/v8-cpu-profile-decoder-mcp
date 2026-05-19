@@ -40,7 +40,7 @@ export async function correlateSourceCode(
   topN: number,
   sourcemapDir: string | null
 ): Promise<SourceCorrelationResult> {
-  const hotFunctions = extractHottestFunctions(profile, topN, 0, false);
+  const hotFunctions = extractHottestFunctions(profile, topN, 0, false, false, false);
   const errors: string[] = [];
 
   const resolved = await Promise.all(

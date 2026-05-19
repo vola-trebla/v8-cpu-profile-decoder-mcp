@@ -32,6 +32,8 @@ export interface HotFunction {
   selfPercent: number;
   totalPercent: number;
   hitCount: number;
+  instanceCount: number;
+  frameworkLabel: string | null;
 }
 
 export interface CallerEntry {

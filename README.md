@@ -157,6 +157,103 @@ Falls back gracefully to compiled JS locations if no source map is found.
 }
 ```
 
+### `analyze_gc_pressure`
+
+Reports garbage collection overhead as a percentage of profiling duration, broken down by GC type.
+Flags when GC exceeds a configurable threshold and provides a targeted recommendation.
+
+```json
+{
+  "profile_path": "/app/profiles/CPU.cpuprofile",
+  "threshold_percent": 10
+}
+```
+
+```json
+{
+  "gc_ticks": 184,
+  "total_ticks": 1240,
+  "gc_percentage": 14.84,
+  "gc_type_breakdown": {
+    "scavenger": 122,
+    "mark_sweep": 0,
+    "mark_compact": 0,
+    "incremental": 62,
+    "generic": 0
+  },
+  "exceeds_threshold": true,
+  "threshold_percent": 10,
+  "verdict": "GC consumed 14.84% of CPU — exceeds the 10% threshold. Dominated by Scavenger (short-lived object pressure). Consider object pooling, reusing buffers, or reducing closure captures."
+}
+```
+
+---
+
+### `diff_profiles`
+
+Compares two `.cpuprofile` files (before/after an optimization) and returns per-function CPU time deltas,
+normalized against each profile's total duration. Frames are matched by call-frame coordinates, not
+transient node IDs, so alignment is stable across profiling sessions.
+
+```json
+{
+  "before_profile_path": "/app/profiles/before.cpuprofile",
+  "after_profile_path": "/app/profiles/after.cpuprofile",
+  "top_n": 5
+}
+```
+
+```json
+{
+  "before_duration_ms": 5000,
+  "after_duration_ms": 4800,
+  "total_execution_delta_ms": -200,
+  "total_execution_delta_percent": -4,
+  "top_improvements": [
+    {
+      "function_name": "hashPassword",
+      "url": "file:///app/dist/auth/crypto.js",
+      "line_number": 42,
+      "before_ms": 1842.5,
+      "after_ms": 620.1,
+      "absolute_diff_ms": -1222.4,
+      "relative_diff_percent": -66.34
+    }
+  ],
+  "top_regressions": [],
+  "only_in_before": [],
+  "only_in_after": []
+}
+```
+
+---
+
+### `analyze_async_bottlenecks`
+
+Detects event-loop overhead by identifying V8 internal frames representing async machinery —
+microtask queue processing, `nextTick` saturation, and timer/immediate callbacks.
+
+```json
+{
+  "profile_path": "/app/profiles/CPU.cpuprofile",
+  "threshold_percent": 10
+}
+```
+
+```json
+{
+  "total_ticks": 1240,
+  "async_ticks": 186,
+  "event_loop_overhead_ms": 372,
+  "event_loop_overhead_percent": 15.0,
+  "dominant_async_patterns": [
+    { "pattern": "promise_chains", "ticks": 142, "percent": 11.45 },
+    { "pattern": "nexttick_saturation", "ticks": 44, "percent": 3.55 }
+  ],
+  "verdict": "Event-loop overhead is 15.0% of CPU — exceeds the 10% threshold. Promise chain overhead is visible in the profile. Consider batching microtasks, using Promise.all() to parallelise I/O, or offloading CPU-bound continuations to worker threads."
+}
+```
+
 ---
 
 ## 🚀 Installation
@@ -207,6 +304,12 @@ Or programmatically via Chrome DevTools → Performance tab → Record.
 > _"Map the top 10 hottest functions back to their original TypeScript files"_
 
 > _"My Node.js API is slow under load — profile is at `/tmp/CPU.cpuprofile`, find the bottleneck"_
+
+> _"Is GC the bottleneck? Check the profile at `/tmp/CPU.cpuprofile` and tell me what kind of allocation is causing it"_
+
+> _"Compare these two profiles before and after my optimization — which functions improved and which regressed?"_
+
+> _"Is this app spending too much CPU on async overhead and event-loop machinery?"_
 
 ---
 

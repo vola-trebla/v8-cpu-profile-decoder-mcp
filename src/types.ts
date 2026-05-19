@@ -95,6 +95,23 @@ export interface DiffResult {
   only_in_after: DiffEntry[];
 }
 
+export type AsyncPatternName = 'promise_chains' | 'nexttick_saturation' | 'timer_callbacks';
+
+export interface AsyncPattern {
+  pattern: AsyncPatternName;
+  ticks: number;
+  percent: number;
+}
+
+export interface AsyncBottleneckResult {
+  total_ticks: number;
+  async_ticks: number;
+  event_loop_overhead_ms: number;
+  event_loop_overhead_percent: number;
+  dominant_async_patterns: AsyncPattern[];
+  verdict: string;
+}
+
 export interface GcTypeBreakdown {
   scavenger: number;
   mark_sweep: number;

@@ -9,6 +9,9 @@ import {
   GcPressureResult,
   DiffEntry,
   DiffResult,
+  AsyncPatternName,
+  AsyncPattern,
+  AsyncBottleneckResult,
 } from './types.js';
 
 const V8_INTERNALS = new Set(['(program)', '(garbage collector)', '(idle)', '(root)']);
@@ -520,5 +523,97 @@ export function diffProfiles(before: CpuProfile, after: CpuProfile, topN: number
     top_regressions: regressions.slice(0, topN),
     only_in_before: onlyInBefore.slice(0, topN),
     only_in_after: onlyInAfter.slice(0, topN),
+  };
+}
+
+// Async overhead detection — V8 internal frame patterns for each category.
+// These frames appear as leaf samples when the event loop is processing
+// async machinery rather than user code.
+const ASYNC_PATTERNS: Array<[AsyncPatternName, RegExp]> = [
+  [
+    'promise_chains',
+    /MicrotaskQueue|RunMicrotasks|PromiseResolve|PromiseFulfill|JSPromise|async_hooks|PromiseReactionJob|v8::Promise/i,
+  ],
+  ['nexttick_saturation', /nextTick|_tickCallback|processTicksAndRejections|nextTickQueue/i],
+  [
+    'timer_callbacks',
+    /listOnTimeout|processTimers|setImmediate|immediateQueue|_onImmediate|runNextTicks|TimersList/i,
+  ],
+];
+
+function classifyAsyncFrame(functionName: string): AsyncPatternName | null {
+  for (const [pattern, re] of ASYNC_PATTERNS) {
+    if (re.test(functionName)) return pattern;
+  }
+  return null;
+}
+
+export function analyzeAsyncBottlenecks(
+  profile: CpuProfile,
+  thresholdPercent: number
+): AsyncBottleneckResult {
+  const totalTicks = profile.samples.length;
+  const avgMs = avgDeltaMs(profile);
+  const nodeMap = buildNodeMap(profile);
+
+  const patternTicks = new Map<AsyncPatternName, number>([
+    ['promise_chains', 0],
+    ['nexttick_saturation', 0],
+    ['timer_callbacks', 0],
+  ]);
+
+  for (const sampleId of profile.samples) {
+    const node = nodeMap.get(sampleId);
+    if (!node) continue;
+    const category = classifyAsyncFrame(node.callFrame.functionName);
+    if (category) patternTicks.set(category, patternTicks.get(category)! + 1);
+  }
+
+  const asyncTicks = [...patternTicks.values()].reduce((a, b) => a + b, 0);
+  const overheadMs = Math.round(asyncTicks * avgMs * 100) / 100;
+  const overheadPct = totalTicks > 0 ? Math.round((asyncTicks / totalTicks) * 10000) / 100 : 0;
+
+  const dominantPatterns: AsyncPattern[] = [...patternTicks.entries()]
+    .filter(([, ticks]) => ticks > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([pattern, ticks]) => ({
+      pattern,
+      ticks,
+      percent: totalTicks > 0 ? Math.round((ticks / totalTicks) * 10000) / 100 : 0,
+    }));
+
+  const recommendations: Record<AsyncPatternName, string> = {
+    promise_chains:
+      'Promise chain overhead is visible in the profile. ' +
+      'Consider batching microtasks, using Promise.all() to parallelise I/O, ' +
+      'or offloading CPU-bound continuations to worker threads.',
+    nexttick_saturation:
+      'process.nextTick saturation detected. ' +
+      'Callbacks are starving the I/O poll phase — ' +
+      'replace hot nextTick chains with setImmediate or batch them into a single tick.',
+    timer_callbacks:
+      'Timer/immediate callback overhead is significant. ' +
+      'Consolidate frequent timers, increase intervals, or replace polling with event-driven I/O.',
+  };
+
+  let verdict: string;
+  if (asyncTicks === 0) {
+    verdict = 'No async event-loop overhead detected in this profile.';
+  } else {
+    const dominant = dominantPatterns[0];
+    const status =
+      overheadPct >= thresholdPercent
+        ? `Event-loop overhead is ${overheadPct}% of CPU — exceeds the ${thresholdPercent}% threshold. `
+        : `Event-loop overhead is ${overheadPct}% of CPU. `;
+    verdict = status + recommendations[dominant.pattern];
+  }
+
+  return {
+    total_ticks: totalTicks,
+    async_ticks: asyncTicks,
+    event_loop_overhead_ms: overheadMs,
+    event_loop_overhead_percent: overheadPct,
+    dominant_async_patterns: dominantPatterns,
+    verdict,
   };
 }

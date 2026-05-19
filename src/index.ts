@@ -8,6 +8,7 @@ import {
   analyzeCallTreePath,
   analyzeGcPressure,
   diffProfiles,
+  analyzeAsyncBottlenecks,
 } from './decoder.js';
 import { correlateSourceCode } from './sourcemap.js';
 
@@ -230,6 +231,38 @@ server.registerTool(
         loadProfile(after_profile_path),
       ]);
       const result = diffProfiles(before, after, top_n);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err) {
+      return errorResponse(err);
+    }
+  }
+);
+
+server.registerTool(
+  'analyze_async_bottlenecks',
+  {
+    description:
+      'Detects event-loop overhead in a V8 CPU profile by identifying V8 internal frames ' +
+      'that represent async machinery — microtask queue processing, nextTick saturation, ' +
+      'and timer/immediate callbacks. These frames are invisible to most profilers but ' +
+      'consume real CPU when promise chains are deep or nextTick is overused. ' +
+      'Use to answer: is the bottleneck async orchestration overhead rather than synchronous computation?',
+    inputSchema: {
+      profile_path: z.string().describe('Absolute path to the .cpuprofile file'),
+      threshold_percent: z
+        .number()
+        .min(0)
+        .max(100)
+        .default(10)
+        .describe(
+          'Async overhead percentage above which a warning is emitted in the verdict (default: 10)'
+        ),
+    },
+  },
+  async ({ profile_path, threshold_percent }) => {
+    try {
+      const profile = await loadProfile(profile_path);
+      const result = analyzeAsyncBottlenecks(profile, threshold_percent);
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err) {
       return errorResponse(err);

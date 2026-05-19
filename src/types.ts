@@ -73,3 +73,21 @@ export interface SourceCorrelationResult {
   resolved: ResolvedFunction[];
   sourcemapErrors: string[];
 }
+
+export interface GcTypeBreakdown {
+  scavenger: number;
+  mark_sweep: number;
+  mark_compact: number;
+  incremental: number;
+  generic: number;
+}
+
+export interface GcPressureResult {
+  gc_ticks: number;
+  total_ticks: number;
+  gc_percentage: number;
+  gc_type_breakdown: GcTypeBreakdown;
+  exceeds_threshold: boolean;
+  threshold_percent: number;
+  verdict: string;
+}

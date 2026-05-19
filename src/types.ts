@@ -74,6 +74,27 @@ export interface SourceCorrelationResult {
   sourcemapErrors: string[];
 }
 
+export interface DiffEntry {
+  function_name: string;
+  url: string;
+  line_number: number;
+  before_ms: number;
+  after_ms: number;
+  absolute_diff_ms: number;
+  relative_diff_percent: number;
+}
+
+export interface DiffResult {
+  before_duration_ms: number;
+  after_duration_ms: number;
+  total_execution_delta_ms: number;
+  total_execution_delta_percent: number;
+  top_improvements: DiffEntry[];
+  top_regressions: DiffEntry[];
+  only_in_before: DiffEntry[];
+  only_in_after: DiffEntry[];
+}
+
 export interface GcTypeBreakdown {
   scavenger: number;
   mark_sweep: number;
